@@ -36,16 +36,12 @@ function onConnected() {
     // Subscribe to the Public Topic
     stompClient.subscribe('/topic/public', onMessageReceived);
 
-    // Subscribe to the Private Topic
-    stompClient.subscribe('/topic/' + username + '.private', onMessageReceived);
-
-    // Fetch existing messages
-    fetch('/api/messages?username=' + encodeURIComponent(username))
+    // Fetch existing public messages (null chatRoomId for now)
+    fetch('/api/messages')
         .then(response => response.json())
         .then(messages => {
             messages.forEach(message => {
                 if (message.type === 'CHAT') {
-                    // Reusing the parser logic but by directly wrapping in mock event payload format
                     onMessageReceived({ body: JSON.stringify(message) });
                 }
             });
@@ -55,7 +51,7 @@ function onConnected() {
     // Tell your username to the server
     stompClient.send("/app/chat.addUser",
         {},
-        JSON.stringify({ sender: username, type: 'JOIN' })
+        JSON.stringify({ senderUsername: username, type: 'JOIN' })
     )
 }
 
@@ -67,13 +63,14 @@ function onError(error) {
 
 function sendMessage(event) {
     var messageContent = messageInput.value.trim();
-    var recipientInput = document.querySelector('#recipient').value.trim();
+    // Assuming you have a chatRoomId input if you want groups, but empty means public room.
+    var roomIdInput = document.querySelector('#recipient').value.trim();
 
     if (messageContent && stompClient) {
         var chatMessage = {
-            sender: username,
+            senderUsername: username,
             content: messageInput.value,
-            recipient: recipientInput === '' ? null : recipientInput,
+            chatRoomId: roomIdInput === '' ? null : parseInt(roomIdInput),
             type: 'CHAT'
         };
 
@@ -89,38 +86,35 @@ function onMessageReceived(payload) {
 
     var messageElement = document.createElement('li');
 
+    var senderName = message.sender.username;
+
     if (message.type === 'JOIN') {
         messageElement.classList.add('event-message');
-        message.content = message.sender + ' joined!';
+        message.content = senderName + ' joined!';
     } else if (message.type === 'LEAVE') {
         messageElement.classList.add('event-message');
-        message.content = message.sender + ' left!';
+        message.content = senderName + ' left!';
     } else {
         messageElement.classList.add('chat-message');
 
         var avatarElement = document.createElement('i');
-        var avatarText = document.createTextNode(message.sender[0]);
+        var avatarText = document.createTextNode(senderName[0].toUpperCase());
         avatarElement.appendChild(avatarText);
-        avatarElement.style['background-color'] = getAvatarColor(message.sender);
+        avatarElement.style['background-color'] = getAvatarColor(senderName);
 
         messageElement.appendChild(avatarElement);
 
         var usernameElement = document.createElement('span');
-        var usernameText = document.createTextNode(message.sender);
+        var usernameText = document.createTextNode(senderName);
         usernameElement.appendChild(usernameText);
 
-        if (message.recipient) {
-            var privateMark = document.createElement('span');
-            privateMark.className = 'private-mark';
-            if (message.recipient === username) {
-                privateMark.innerText = ' (Private from ' + message.sender + ')';
-            } else {
-                privateMark.innerText = ' (Private to ' + message.recipient + ')';
-            }
-            privateMark.style.fontWeight = 'bold';
-            privateMark.style.color = '#ff4743';
-            privateMark.style.fontSize = '12px';
-            usernameElement.appendChild(privateMark);
+        if (message.status) {
+            var statusMark = document.createElement('span');
+            statusMark.className = 'status-mark';
+            statusMark.innerText = ' ✓ ' + message.status;
+            statusMark.style.fontSize = '12px';
+            statusMark.style.color = message.status === 'READ' ? '#34B7F1' : '#888';
+            usernameElement.appendChild(statusMark);
         }
 
         messageElement.appendChild(usernameElement);

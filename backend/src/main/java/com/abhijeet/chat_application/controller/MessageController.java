@@ -19,7 +19,7 @@ public class MessageController {
     private final ChatMessageService chatMessageService;
 
     @GetMapping
-    public ResponseEntity<List<ChatMessage>> getMessages(@RequestParam(required = false) String username) {
-        return ResponseEntity.ok(chatMessageService.getMessages(username));
+    public ResponseEntity<List<ChatMessage>> getMessages(@RequestParam(required = false) Long chatRoomId) {
+        return ResponseEntity.ok(chatMessageService.getMessages(chatRoomId));
     }
 }

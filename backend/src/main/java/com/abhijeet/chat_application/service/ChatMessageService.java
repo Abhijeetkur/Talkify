@@ -17,10 +17,10 @@ public class ChatMessageService {
         return chatMessageRepository.save(chatMessage);
     }
 
-    public List<ChatMessage> getMessages(String username) {
-        if (username != null && !username.trim().isEmpty()) {
-            return chatMessageRepository.findMessagesForUser(username);
+    public List<ChatMessage> getMessages(Long chatRoomId) {
+        if (chatRoomId != null) {
+            return chatMessageRepository.findByChatRoomIdOrderByTimestampAsc(chatRoomId);
         }
-        return chatMessageRepository.findAll();
+        return chatMessageRepository.findByChatRoomIsNullOrderByTimestampAsc();
     }
 }
