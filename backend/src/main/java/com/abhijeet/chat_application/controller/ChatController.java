@@ -7,6 +7,7 @@ import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
+import org.springframework.messaging.simp.SimpMessageSendingOperations;
 import org.springframework.stereotype.Controller;
 
 import java.time.LocalDateTime;
@@ -16,17 +17,24 @@ import java.time.LocalDateTime;
 public class ChatController {
 
     private final ChatMessageRepository chatMessageRepository;
+    private final SimpMessageSendingOperations messagingTemplate;
 
     @MessageMapping("/chat.sendMessage")
-    @SendTo("/topic/public")
-    public ChatMessage sendMessage(@Payload ChatMessage chatMessage) {
+    public void sendMessage(@Payload ChatMessage chatMessage) {
         if (chatMessage.getTimestamp() == null) {
             chatMessage.setTimestamp(LocalDateTime.now());
         }
         // Save the chat message in the DB
         chatMessageRepository.save(chatMessage);
 
-        return chatMessage;
+        if (chatMessage.getRecipient() != null && !chatMessage.getRecipient().trim().isEmpty()) {
+            // Send to recipient
+            messagingTemplate.convertAndSend("/topic/" + chatMessage.getRecipient() + ".private", chatMessage);
+            // Send back to sender so they see their own message
+            messagingTemplate.convertAndSend("/topic/" + chatMessage.getSender() + ".private", chatMessage);
+        } else {
+            messagingTemplate.convertAndSend("/topic/public", chatMessage);
+        }
     }
 
     @MessageMapping("/chat.addUser")

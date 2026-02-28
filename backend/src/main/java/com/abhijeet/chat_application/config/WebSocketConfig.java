@@ -14,7 +14,12 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         // Registering a websocket endpoint that the clients will use to connect to our
         // websocket server
-        registry.addEndpoint("/ws").setAllowedOriginPatterns("*").withSockJS();
+        registry.addEndpoint("/ws")
+                .setAllowedOriginPatterns("*")
+                .withSockJS();
+        // Also register a raw WebSocket endpoint (without SockJS)
+        registry.addEndpoint("/ws-raw")
+                .setAllowedOriginPatterns("*");
     }
 
     @Override

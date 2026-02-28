@@ -4,7 +4,8 @@
     box-sizing: border-box;
 }
 
-html,body {
+html,
+body {
     height: 100%;
     overflow: hidden;
 }
@@ -47,7 +48,12 @@ input {
     outline: none;
 }
 
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
     margin-top: 20px;
     margin-bottom: 20px;
 }
@@ -207,9 +213,15 @@ button.accent {
     color: #43464b;
 }
 
-#messageForm .input-group input {
+#messageForm .input-group #recipient {
     float: left;
-    width: calc(100% - 85px);
+    width: 25%;
+    margin-right: 2%;
+}
+
+#messageForm .input-group #message {
+    float: left;
+    width: calc(73% - 85px);
 }
 
 #messageForm .input-group button {
@@ -251,7 +263,7 @@ button.accent {
     .chat-container {
         height: calc(100% - 30px);
     }
-    
+
     .username-page-container {
         width: auto;
         margin-left: 15px;
@@ -267,7 +279,13 @@ button.accent {
         width: 65px;
     }
 
-    #messageForm .input-group input {
+    #messageForm .input-group #recipient {
+        width: 100%;
+        margin-right: 0;
+        margin-bottom: 5px;
+    }
+
+    #messageForm .input-group #message {
         width: calc(100% - 70px);
     }
 

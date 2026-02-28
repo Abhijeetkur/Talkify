@@ -36,8 +36,11 @@ function onConnected() {
     // Subscribe to the Public Topic
     stompClient.subscribe('/topic/public', onMessageReceived);
 
+    // Subscribe to the Private Topic
+    stompClient.subscribe('/topic/' + username + '.private', onMessageReceived);
+
     // Fetch existing messages
-    fetch('/api/messages')
+    fetch('/api/messages?username=' + encodeURIComponent(username))
         .then(response => response.json())
         .then(messages => {
             messages.forEach(message => {
@@ -64,11 +67,13 @@ function onError(error) {
 
 function sendMessage(event) {
     var messageContent = messageInput.value.trim();
+    var recipientInput = document.querySelector('#recipient').value.trim();
 
     if (messageContent && stompClient) {
         var chatMessage = {
             sender: username,
             content: messageInput.value,
+            recipient: recipientInput === '' ? null : recipientInput,
             type: 'CHAT'
         };
 
@@ -103,6 +108,21 @@ function onMessageReceived(payload) {
         var usernameElement = document.createElement('span');
         var usernameText = document.createTextNode(message.sender);
         usernameElement.appendChild(usernameText);
+
+        if (message.recipient) {
+            var privateMark = document.createElement('span');
+            privateMark.className = 'private-mark';
+            if (message.recipient === username) {
+                privateMark.innerText = ' (Private from ' + message.sender + ')';
+            } else {
+                privateMark.innerText = ' (Private to ' + message.recipient + ')';
+            }
+            privateMark.style.fontWeight = 'bold';
+            privateMark.style.color = '#ff4743';
+            privateMark.style.fontSize = '12px';
+            usernameElement.appendChild(privateMark);
+        }
+
         messageElement.appendChild(usernameElement);
     }
 

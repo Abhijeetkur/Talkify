@@ -28,6 +28,7 @@ public class ChatMessage {
 
     private String content;
     private String sender;
+    private String recipient; // null for public
     @Enumerated(EnumType.STRING)
     private MessageType type;
 
