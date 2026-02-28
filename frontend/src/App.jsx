@@ -236,7 +236,7 @@ const ChatApp = () => {
       <div className="flex h-screen w-full items-center justify-center bg-gray-100">
         <div className="w-full max-w-md p-8 bg-white rounded-xl shadow-lg border border-gray-200">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-green-500 mb-2 font-sans tracking-tight">WhatsApp Web</h1>
+            <h1 className="text-3xl font-bold text-green-500 mb-2 font-sans tracking-tight">Talkify</h1>
             <p className="text-gray-500">Enter your name to join the chat</p>
           </div>
 
@@ -317,7 +317,7 @@ const ChatApp = () => {
       <div className="flex-1 flex flex-col w-full md:w-2/3 bg-[url('https://whatsapp-clone-web.netlify.app/bg-chat-tile-dark_a4be512e7195b6b733d9110b408f075d.png')] bg-repeat">
         {!activeChat ? (
           <div className="flex-1 flex flex-col items-center justify-center bg-[#f0f2f5] border-b-[6px] border-green-500">
-            <h1 className="text-3xl font-light text-gray-700 mb-4 mt-8">WhatsApp Web</h1>
+            <h1 className="text-3xl font-light text-gray-700 mb-4 mt-8">Talkify</h1>
             <p className="text-sm text-gray-500 text-center max-w-md leading-relaxed">
               Select a user from the contact list to start a 1-on-1 private chat.<br />
               Messages are securely segregated between users.
