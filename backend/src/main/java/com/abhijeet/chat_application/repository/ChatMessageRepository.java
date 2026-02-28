@@ -1,6 +1,6 @@
 package com.abhijeet.chat_application.repository;
 
-import com.abhijeet.chat_application.model.ChatMessage;
+import com.abhijeet.chat_application.entity.ChatMessage;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;

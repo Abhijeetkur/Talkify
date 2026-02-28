@@ -1,7 +1,7 @@
 package com.abhijeet.chat_application.controller;
 
-import com.abhijeet.chat_application.model.ChatMessage;
-import com.abhijeet.chat_application.repository.ChatMessageRepository;
+import com.abhijeet.chat_application.entity.ChatMessage;
+import com.abhijeet.chat_application.service.ChatMessageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,13 +16,10 @@ import java.util.List;
 @RequiredArgsConstructor
 public class MessageController {
 
-    private final ChatMessageRepository chatMessageRepository;
+    private final ChatMessageService chatMessageService;
 
     @GetMapping
     public ResponseEntity<List<ChatMessage>> getMessages(@RequestParam(required = false) String username) {
-        if (username != null && !username.trim().isEmpty()) {
-            return ResponseEntity.ok(chatMessageRepository.findMessagesForUser(username));
-        }
-        return ResponseEntity.ok(chatMessageRepository.findAll());
+        return ResponseEntity.ok(chatMessageService.getMessages(username));
     }
 }

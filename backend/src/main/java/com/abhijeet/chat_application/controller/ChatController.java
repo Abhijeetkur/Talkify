@@ -1,8 +1,9 @@
 package com.abhijeet.chat_application.controller;
 
-import com.abhijeet.chat_application.model.ChatMessage;
-import com.abhijeet.chat_application.repository.ChatMessageRepository;
+import com.abhijeet.chat_application.entity.ChatMessage;
+import com.abhijeet.chat_application.service.ChatMessageService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.handler.annotation.SendTo;
@@ -14,9 +15,10 @@ import java.time.LocalDateTime;
 
 @Controller
 @RequiredArgsConstructor
+@Slf4j
 public class ChatController {
 
-    private final ChatMessageRepository chatMessageRepository;
+    private final ChatMessageService chatMessageService;
     private final SimpMessageSendingOperations messagingTemplate;
 
     @MessageMapping("/chat.sendMessage")
@@ -25,7 +27,7 @@ public class ChatController {
             chatMessage.setTimestamp(LocalDateTime.now());
         }
         // Save the chat message in the DB
-        chatMessageRepository.save(chatMessage);
+        chatMessageService.save(chatMessage);
 
         if (chatMessage.getRecipient() != null && !chatMessage.getRecipient().trim().isEmpty()) {
             // Send to recipient
@@ -47,7 +49,7 @@ public class ChatController {
             chatMessage.setTimestamp(LocalDateTime.now());
         }
         // Save the JOIN message in the DB
-        chatMessageRepository.save(chatMessage);
+        chatMessageService.save(chatMessage);
 
         return chatMessage;
     }

@@ -1,7 +1,7 @@
 package com.abhijeet.chat_application.config;
 
-import com.abhijeet.chat_application.model.ChatMessage;
-import com.abhijeet.chat_application.repository.ChatMessageRepository;
+import com.abhijeet.chat_application.entity.ChatMessage;
+import com.abhijeet.chat_application.service.ChatMessageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
 public class WebSocketEventListener {
 
     private final SimpMessageSendingOperations messagingTemplate;
-    private final ChatMessageRepository chatMessageRepository;
+    private final ChatMessageService chatMessageService;
 
     @EventListener
     public void handleWebSocketDisconnectListener(SessionDisconnectEvent event) {
@@ -33,7 +33,7 @@ public class WebSocketEventListener {
                     .timestamp(LocalDateTime.now())
                     .build();
 
-            chatMessageRepository.save(chatMessage);
+            chatMessageService.save(chatMessage);
             messagingTemplate.convertAndSend("/topic/public", chatMessage);
         }
     }

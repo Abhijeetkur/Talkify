@@ -1,4 +1,4 @@
-package com.abhijeet.chat_application.model;
+package com.abhijeet.chat_application.entity;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
