@@ -12,6 +12,11 @@ const ChatApp = () => {
   const [users, setUsers] = useState([]);
   const [unreadCounts, setUnreadCounts] = useState({});
   const [lastMessages, setLastMessages] = useState({});
+  const [password, setPassword] = useState('');
+  const [isLoginMode, setIsLoginMode] = useState(true);
+  const [token, setToken] = useState(localStorage.getItem('chatToken') || '');
+  const [error, setError] = useState('');
+
   const [activeChat, setActiveChat] = useState(null); // No default public room
 
   const stompClientRef = useRef(null);
@@ -27,18 +32,22 @@ const ChatApp = () => {
     scrollToBottom();
   }, [messages]);
 
+  const authHeaders = {
+    'Authorization': `Bearer ${token}`
+  };
+
   const loadUsers = () => {
-    fetch('/api/users')
+    fetch('/api/users', { headers: authHeaders })
       .then(res => res.json())
       .then(data => setUsers(data.filter(u => u.username !== username))) // Don't show self
       .catch(err => console.error(err));
 
-    fetch(`/api/messages/unread-counts?username=${encodeURIComponent(username)}`)
+    fetch(`/api/messages/unread-counts?username=${encodeURIComponent(username)}`, { headers: authHeaders })
       .then(res => res.json())
       .then(data => setUnreadCounts(data))
       .catch(err => console.error("Error fetching unread counts:", err));
 
-    fetch(`/api/messages/last-messages?username=${encodeURIComponent(username)}`)
+    fetch(`/api/messages/last-messages?username=${encodeURIComponent(username)}`, { headers: authHeaders })
       .then(res => res.json())
       .then(data => setLastMessages(data))
       .catch(err => console.error("Error fetching last messages:", err));
@@ -54,25 +63,61 @@ const ChatApp = () => {
     return () => clearInterval(interval);
   }, [isConnected, username]);
 
-  const handleConnect = (e) => {
+  const handleAuth = async (e) => {
     e.preventDefault();
-    if (!username.trim()) return;
+    if (!username.trim() || !password.trim()) return;
+    setError('');
 
+    const endpoint = isLoginMode ? '/api/auth/login' : '/api/auth/register';
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Authentication failed');
+      }
+
+      const data = await response.json();
+      setToken(data.token);
+      localStorage.setItem('chatToken', data.token);
+      localStorage.setItem('chatUsername', data.username);
+      connectWebSocket(data.token, data.username);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => {
+    const storedToken = localStorage.getItem('chatToken');
+    const storedUsername = localStorage.getItem('chatUsername');
+    if (storedToken && storedUsername && !isConnected) {
+      setUsername(storedUsername);
+      setToken(storedToken);
+      connectWebSocket(storedToken, storedUsername);
+    }
+  }, []);
+
+  const connectWebSocket = (jwtToken, currentUsername) => {
     const socket = new SockJS('/ws');
     const client = new Client({
       webSocketFactory: () => socket,
       reconnectDelay: 5000,
+      connectHeaders: {
+        Authorization: `Bearer ${jwtToken}`
+      },
       onConnect: () => {
         setIsConnected(true);
         stompClientRef.current = client;
 
-        // Tell the server user joined (which creates the user in DB)
         client.publish({
           destination: '/app/chat.addUser',
-          body: JSON.stringify({ senderUsername: username, type: 'JOIN' }),
+          body: JSON.stringify({ senderUsername: currentUsername, type: 'JOIN' }),
         });
-
-        // Initialize logic removed for public chat. You must now select a user.
       },
       onStompError: (frame) => {
         console.error('Broker reported error: ' + frame.headers['message']);
@@ -97,9 +142,8 @@ const ChatApp = () => {
     let fetchUrl = '';
 
     if (chat.type === 'private') {
-      // Get or create 1-on-1 room from backend
       try {
-        const res = await fetch(`/api/chatrooms/1on1?user1=${encodeURIComponent(username)}&user2=${encodeURIComponent(chat.name)}`);
+        const res = await fetch(`/api/chatrooms/1on1?user1=${encodeURIComponent(username)}&user2=${encodeURIComponent(chat.name)}`, { headers: authHeaders });
         const room = await res.json();
         chat.id = room.id; // set the true DB chatRoomId
         setActiveChat({ ...chat, id: room.id });
@@ -113,7 +157,7 @@ const ChatApp = () => {
     }
 
     // Fetch message history for this room
-    fetch(fetchUrl)
+    fetch(fetchUrl, { headers: authHeaders })
       .then((res) => res.json())
       .then((data) => {
         setMessages(data);
@@ -177,6 +221,10 @@ const ChatApp = () => {
     setIsConnected(false);
     setMessages([]);
     setUsername('');
+    setPassword('');
+    setToken('');
+    localStorage.removeItem('chatToken');
+    localStorage.removeItem('chatUsername');
     currentSubscriptionRef.current = null;
   };
 
@@ -237,10 +285,15 @@ const ChatApp = () => {
         <div className="w-full max-w-md p-8 bg-white rounded-xl shadow-lg border border-gray-200">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-green-500 mb-2 font-sans tracking-tight">Talkify</h1>
-            <p className="text-gray-500">Enter your name to join the chat</p>
+            <p className="text-gray-500">{isLoginMode ? 'Login to your account' : 'Create an account'} to join the chat</p>
           </div>
 
-          <form onSubmit={handleConnect} className="space-y-6">
+          <form onSubmit={handleAuth} className="space-y-4">
+            {error && (
+              <div className="bg-red-50 text-red-500 p-3 rounded-lg text-sm text-center border border-red-200">
+                {error}
+              </div>
+            )}
             <div>
               <input
                 type="text"
@@ -251,13 +304,33 @@ const ChatApp = () => {
                 required
               />
             </div>
+            <div>
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
+                required
+              />
+            </div>
             <button
               type="submit"
-              className="w-full bg-green-500 text-white font-semibold py-3 px-4 rounded-lg hover:bg-green-600 transition duration-200 ease-in-out transform hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50"
+              className="w-full bg-green-500 text-white font-semibold py-3 px-4 rounded-lg mt-2 hover:bg-green-600 transition duration-200 ease-in-out transform hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50"
             >
-              Start Chatting
+              {isLoginMode ? 'Login' : 'Sign Up'}
             </button>
           </form>
+
+          <div className="mt-6 text-center text-sm text-gray-500">
+            {isLoginMode ? "Don't have an account? " : "Already have an account? "}
+            <button
+              onClick={() => { setIsLoginMode(!isLoginMode); setError(''); }}
+              className="text-green-500 hover:text-green-600 font-semibold underline-offset-2 hover:underline focus:outline-none"
+            >
+              {isLoginMode ? 'Sign up' : 'Login'}
+            </button>
+          </div>
         </div>
       </div>
     );
