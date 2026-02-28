@@ -22,4 +22,14 @@ public class MessageController {
     public ResponseEntity<List<ChatMessage>> getMessages(@RequestParam(required = false) Long chatRoomId) {
         return ResponseEntity.ok(chatMessageService.getMessages(chatRoomId));
     }
+
+    @GetMapping("/unread-counts")
+    public ResponseEntity<java.util.Map<String, Long>> getUnreadCounts(@RequestParam String username) {
+        return ResponseEntity.ok(chatMessageService.getUnreadCounts(username));
+    }
+
+    @GetMapping("/last-messages")
+    public ResponseEntity<java.util.Map<String, String>> getLastMessages(@RequestParam String username) {
+        return ResponseEntity.ok(chatMessageService.getLastMessages(username));
+    }
 }

@@ -35,13 +35,23 @@ public class ChatController {
             chatRoom = chatRoomRepository.findById(request.getChatRoomId()).orElse(null);
         }
 
+        ChatMessage.MessageStatus initialStatus = ChatMessage.MessageStatus.SENT;
+        if (chatRoom != null && chatRoom.isGroupChat() == false) {
+            for (User participant : chatRoom.getParticipants()) {
+                if (!participant.getUsername().equals(sender.getUsername()) && participant.isOnline()) {
+                    initialStatus = ChatMessage.MessageStatus.DELIVERED;
+                    break;
+                }
+            }
+        }
+
         ChatMessage chatMessage = ChatMessage.builder()
                 .sender(sender)
                 .chatRoom(chatRoom)
                 .content(request.getContent())
                 .type(request.getType())
                 .timestamp(LocalDateTime.now())
-                .status(ChatMessage.MessageStatus.SENT)
+                .status(initialStatus)
                 .build();
 
         // Save the chat message in the DB
@@ -65,6 +75,30 @@ public class ChatController {
         // Add username in web socket session
         headerAccessor.getSessionAttributes().put("username", user.getUsername());
 
+        // Mark messages as delivered for this user
+        java.util.List<ChatMessage> deliveredMessages = chatMessageService.markAsDeliveredForUser(user.getUsername());
+
+        // Notify senders about the status update by broadcasting to related chat rooms
+        java.util.Map<Long, java.util.List<Long>> roomIdToMessageIds = new java.util.HashMap<>();
+        if (deliveredMessages != null) {
+            for (ChatMessage msg : deliveredMessages) {
+                if (msg.getChatRoom() != null) {
+                    roomIdToMessageIds.computeIfAbsent(msg.getChatRoom().getId(), k -> new java.util.ArrayList<>())
+                            .add(msg.getId());
+                }
+            }
+        }
+
+        for (java.util.Map.Entry<Long, java.util.List<Long>> entry : roomIdToMessageIds.entrySet()) {
+            StatusUpdateMessage statusUpdate = StatusUpdateMessage.builder()
+                    .type(ChatMessage.MessageType.STATUS_UPDATE)
+                    .chatRoomId(entry.getKey())
+                    .messageIds(entry.getValue())
+                    .newStatus(ChatMessage.MessageStatus.DELIVERED)
+                    .build();
+            messagingTemplate.convertAndSend("/topic/chatrooms/" + entry.getKey(), statusUpdate);
+        }
+
         ChatMessage chatMessage = ChatMessage.builder()
                 .sender(user)
                 .type(ChatMessage.MessageType.JOIN)
@@ -75,5 +109,26 @@ public class ChatController {
         chatMessageService.save(chatMessage);
 
         return chatMessage;
+    }
+
+    @MessageMapping("/chat.readMessages")
+    public void readMessages(@Payload ChatMessageRequest request) {
+        Long chatRoomId = request.getChatRoomId();
+        String readerUsername = request.getSenderUsername();
+
+        if (chatRoomId != null) {
+            java.util.List<Long> messageIds = chatMessageService.markAsRead(chatRoomId, readerUsername);
+
+            if (!messageIds.isEmpty()) {
+                StatusUpdateMessage statusUpdate = StatusUpdateMessage.builder()
+                        .type(ChatMessage.MessageType.STATUS_UPDATE)
+                        .chatRoomId(chatRoomId)
+                        .messageIds(messageIds)
+                        .newStatus(ChatMessage.MessageStatus.READ)
+                        .build();
+
+                messagingTemplate.convertAndSend("/topic/chatrooms/" + chatRoomId, statusUpdate);
+            }
+        }
     }
 }

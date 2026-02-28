@@ -10,6 +10,8 @@ const ChatApp = () => {
   const [messages, setMessages] = useState([]);
   const [messageInput, setMessageInput] = useState('');
   const [users, setUsers] = useState([]);
+  const [unreadCounts, setUnreadCounts] = useState({});
+  const [lastMessages, setLastMessages] = useState({});
   const [activeChat, setActiveChat] = useState(null); // No default public room
 
   const stompClientRef = useRef(null);
@@ -30,6 +32,16 @@ const ChatApp = () => {
       .then(res => res.json())
       .then(data => setUsers(data.filter(u => u.username !== username))) // Don't show self
       .catch(err => console.error(err));
+
+    fetch(`/api/messages/unread-counts?username=${encodeURIComponent(username)}`)
+      .then(res => res.json())
+      .then(data => setUnreadCounts(data))
+      .catch(err => console.error("Error fetching unread counts:", err));
+
+    fetch(`/api/messages/last-messages?username=${encodeURIComponent(username)}`)
+      .then(res => res.json())
+      .then(data => setLastMessages(data))
+      .catch(err => console.error("Error fetching last messages:", err));
   };
 
   // Polling for users every 5 seconds (temporary solution to keep online status fresh)
@@ -79,6 +91,7 @@ const ChatApp = () => {
 
     setActiveChat(chat);
     setMessages([]); // clear current view
+    setUnreadCounts(prev => ({ ...prev, [chat.name]: 0 })); // reset unread count when opening chat
 
     let topic = '';
     let fetchUrl = '';
@@ -102,14 +115,39 @@ const ChatApp = () => {
     // Fetch message history for this room
     fetch(fetchUrl)
       .then((res) => res.json())
-      .then((data) => setMessages(data))
+      .then((data) => {
+        setMessages(data);
+        // Mark existing messages as read when we open the chat
+        if (chat.id && stompClientRef.current?.connected) {
+          stompClientRef.current.publish({
+            destination: '/app/chat.readMessages',
+            body: JSON.stringify({ chatRoomId: chat.id, senderUsername: username })
+          });
+        }
+      })
       .catch(err => console.error("Error fetching messages:", err));
 
     // Subscribe to the active room
     if (stompClientRef.current && stompClientRef.current.connected) {
       currentSubscriptionRef.current = stompClientRef.current.subscribe(topic, (message) => {
         const parsedMessage = JSON.parse(message.body);
-        setMessages((prev) => [...prev, parsedMessage]);
+
+        if (parsedMessage.type === 'STATUS_UPDATE') {
+          setMessages((prev) => prev.map(m =>
+            (parsedMessage.messageIds || []).includes(m.id) ? { ...m, status: parsedMessage.newStatus } : m
+          ));
+        } else {
+          setMessages((prev) => [...prev, parsedMessage]);
+
+          // Send read receipt if we receive a message that isn't ours while actively in this chat
+          const senderName = parsedMessage.senderUsername || parsedMessage.sender?.username;
+          if (parsedMessage.type === 'CHAT' && senderName !== username) {
+            stompClientRef.current.publish({
+              destination: '/app/chat.readMessages',
+              body: JSON.stringify({ chatRoomId: parsedMessage.chatRoomId || chat.id, senderUsername: username })
+            });
+          }
+        }
       });
     }
   };
@@ -257,13 +295,17 @@ const ChatApp = () => {
               <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg ${getAvatarColor(u.username)}`}>
                 {getInitials(u.username)}
               </div>
-              <div className="flex-1">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-[17px] font-normal text-gray-900">{u.username}</h3>
-                  {u.online && <div className="w-2.5 h-2.5 bg-green-500 rounded-full"></div>}
+              <div className="flex-1 overflow-hidden">
+                <div className="flex justify-between items-center mb-0.5">
+                  <h3 className="text-[17px] font-normal text-gray-900 truncate pr-2">{u.username}</h3>
+                  {unreadCounts[u.username] > 0 && (
+                    <div className="w-[22px] h-[22px] bg-green-500 rounded-full flex justify-center items-center text-white text-[11.5px] font-bold flex-shrink-0">
+                      {unreadCounts[u.username]}
+                    </div>
+                  )}
                 </div>
-                <p className="text-sm text-gray-500 whitespace-nowrap overflow-hidden text-ellipsis">
-                  {u.online ? 'Online' : formatLastSeen(u.lastSeen)}
+                <p className={`text-sm whitespace-nowrap overflow-hidden text-ellipsis ${unreadCounts[u.username] > 0 ? 'text-green-600 font-medium' : 'text-gray-500'}`}>
+                  {lastMessages[u.username] || 'Say hi...'}
                 </p>
               </div>
             </div>

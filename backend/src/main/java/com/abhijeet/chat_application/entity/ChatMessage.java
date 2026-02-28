@@ -39,7 +39,7 @@ public class ChatMessage {
     private LocalDateTime timestamp = LocalDateTime.now();
 
     public enum MessageType {
-        CHAT, JOIN, LEAVE
+        CHAT, JOIN, LEAVE, STATUS_UPDATE
     }
 
     public enum MessageStatus {
