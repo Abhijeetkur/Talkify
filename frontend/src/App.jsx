@@ -4,6 +4,141 @@ import SockJS from 'sockjs-client';
 import { Send, User as UserIcon, LogOut, Check, CheckCheck, Users } from 'lucide-react';
 import './index.css';
 
+const generateAndSaveKeyPair = async () => {
+  try {
+    const keyPair = await window.crypto.subtle.generateKey(
+      { name: "ECDH", namedCurve: "P-384" },
+      true,
+      ["deriveKey", "deriveBits"]
+    );
+    const publicKeyJwk = await window.crypto.subtle.exportKey("jwk", keyPair.publicKey);
+    const privateKeyJwk = await window.crypto.subtle.exportKey("jwk", keyPair.privateKey);
+
+    const pubKeys = JSON.stringify(publicKeyJwk);
+    const privKeys = JSON.stringify(privateKeyJwk);
+    localStorage.setItem('chatPrivateKey', privKeys);
+    localStorage.setItem('chatPublicKey', pubKeys);
+
+    return pubKeys;
+  } catch (e) {
+    console.error("Crypto error during key gen", e);
+    return null;
+  }
+};
+
+const getSharedKey = async (theirUsername, theirPublicKeyStr, sharedKeysCache) => {
+  if (sharedKeysCache.current[theirUsername]) {
+    return sharedKeysCache.current[theirUsername];
+  }
+
+  try {
+    const myPrivStr = localStorage.getItem('chatPrivateKey');
+    if (!myPrivStr || !theirPublicKeyStr) return null;
+
+    const myPrivJwk = JSON.parse(myPrivStr);
+    const theirPubJwk = JSON.parse(theirPublicKeyStr);
+
+    const myPrivateKey = await window.crypto.subtle.importKey(
+      "jwk",
+      myPrivJwk,
+      { name: "ECDH", namedCurve: "P-384" },
+      true,
+      ["deriveKey", "deriveBits"]
+    );
+
+    const theirPublicKey = await window.crypto.subtle.importKey(
+      "jwk",
+      theirPubJwk,
+      { name: "ECDH", namedCurve: "P-384" },
+      true,
+      []
+    );
+
+    const derivedKey = await window.crypto.subtle.deriveKey(
+      { name: "ECDH", public: theirPublicKey },
+      myPrivateKey,
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"]
+    );
+
+    sharedKeysCache.current[theirUsername] = derivedKey;
+    return derivedKey;
+  } catch (e) {
+    console.error("Failed to derive shared key", e);
+    return null;
+  }
+};
+
+const bufferToBase64 = (buffer) => {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+};
+
+const base64ToBuffer = (base64) => {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+};
+
+const encryptMessageContent = async (text, sharedKey) => {
+  if (!sharedKey) return text;
+  try {
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const encoded = new TextEncoder().encode(text);
+    const ciphertext = await window.crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: iv },
+      sharedKey,
+      encoded
+    );
+    return "E2E:" + bufferToBase64(iv) + ":" + bufferToBase64(ciphertext);
+  } catch (e) {
+    console.error("Encryption error", e);
+    return text;
+  }
+};
+
+const decryptMessageContent = async (text, sharedKey) => {
+  if (!text || !text.startsWith("E2E:") || !sharedKey) return text;
+  try {
+    // support compact base64 format "E2E:ivBase64:cipherBase64"
+    if (text.includes('{"iv"')) {
+      // old format compatibility just in case we can read it before truncation
+      const payload = JSON.parse(text.substring(4));
+      const iv = new Uint8Array(payload.iv);
+      const ciphertext = new Uint8Array(payload.data);
+      const decryptedBuffer = await window.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: iv },
+        sharedKey,
+        ciphertext
+      );
+      return new TextDecoder().decode(decryptedBuffer);
+    }
+
+    const parts = text.split(":");
+    if (parts.length !== 3) throw new Error("Invalid format");
+
+    const iv = base64ToBuffer(parts[1]);
+    const ciphertext = base64ToBuffer(parts[2]);
+    const decryptedBuffer = await window.crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: new Uint8Array(iv) },
+      sharedKey,
+      ciphertext
+    );
+    return new TextDecoder().decode(decryptedBuffer);
+  } catch (e) {
+    console.error("Decryption error", e);
+    return "🔒 [Encrypted Message - Verification Failed]";
+  }
+};
+
 const ChatApp = () => {
   const [username, setUsername] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -22,6 +157,12 @@ const ChatApp = () => {
   const stompClientRef = useRef(null);
   const messagesEndRef = useRef(null);
   const currentSubscriptionRef = useRef(null);
+  const sharedKeysCache = useRef({});
+  const usersRef = useRef([]);
+
+  useEffect(() => {
+    usersRef.current = users;
+  }, [users]);
 
   // Auto-scroll to bottom of messages
   const scrollToBottom = () => {
@@ -36,21 +177,39 @@ const ChatApp = () => {
     'Authorization': `Bearer ${token}`
   };
 
-  const loadUsers = () => {
-    fetch('/api/users', { headers: authHeaders })
-      .then(res => res.json())
-      .then(data => setUsers(data.filter(u => u.username !== username))) // Don't show self
-      .catch(err => console.error(err));
+  const loadUsers = async () => {
+    try {
+      const resUsers = await fetch('/api/users', { headers: authHeaders });
+      const newUsers = (await resUsers.json()).filter(u => u.username !== username);
+      setUsers(newUsers);
+      usersRef.current = newUsers;
 
-    fetch(`/api/messages/unread-counts?username=${encodeURIComponent(username)}`, { headers: authHeaders })
-      .then(res => res.json())
-      .then(data => setUnreadCounts(data))
-      .catch(err => console.error("Error fetching unread counts:", err));
+      const resCounts = await fetch(`/api/messages/unread-counts?username=${encodeURIComponent(username)}`, { headers: authHeaders });
+      setUnreadCounts(await resCounts.json());
 
-    fetch(`/api/messages/last-messages?username=${encodeURIComponent(username)}`, { headers: authHeaders })
-      .then(res => res.json())
-      .then(data => setLastMessages(data))
-      .catch(err => console.error("Error fetching last messages:", err));
+      const resLastMsgs = await fetch(`/api/messages/last-messages?username=${encodeURIComponent(username)}`, { headers: authHeaders });
+      const dataLastMsgs = await resLastMsgs.json();
+
+      const decryptedLastMessages = {};
+      for (const [otherUser, content] of Object.entries(dataLastMsgs)) {
+        if (content && content.startsWith("E2E:")) {
+          const pubKey = newUsers.find(u => u.username === otherUser)?.publicKey;
+          if (pubKey) {
+            const sharedKey = await getSharedKey(otherUser, pubKey, sharedKeysCache);
+            if (sharedKey) {
+              decryptedLastMessages[otherUser] = await decryptMessageContent(content, sharedKey);
+              continue;
+            }
+          }
+          decryptedLastMessages[otherUser] = "🔒 Encrypted Message";
+        } else {
+          decryptedLastMessages[otherUser] = content;
+        }
+      }
+      setLastMessages(decryptedLastMessages);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   // Polling for users every 5 seconds (temporary solution to keep online status fresh)
@@ -68,13 +227,18 @@ const ChatApp = () => {
     if (!username.trim() || !password.trim()) return;
     setError('');
 
+    let publicKeyStr = localStorage.getItem('chatPublicKey');
+    if (!publicKeyStr) {
+      publicKeyStr = await generateAndSaveKeyPair();
+    }
+
     const endpoint = isLoginMode ? '/api/auth/login' : '/api/auth/register';
 
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username, password, publicKey: publicKeyStr })
       });
 
       if (!response.ok) {
@@ -159,8 +323,26 @@ const ChatApp = () => {
     // Fetch message history for this room
     fetch(fetchUrl, { headers: authHeaders })
       .then((res) => res.json())
-      .then((data) => {
-        setMessages(data);
+      .then(async (data) => {
+        // Find their public key
+        const targetUser = usersRef.current.find(u => u.username === chat.name);
+        const pubKeyStr = targetUser ? targetUser.publicKey : null;
+
+        let decryptedData = data;
+        if (pubKeyStr) {
+          const sharedKey = await getSharedKey(chat.name, pubKeyStr, sharedKeysCache);
+          if (sharedKey) {
+            decryptedData = await Promise.all(data.map(async m => {
+              if (m.type === 'CHAT' && m.content) {
+                const content = await decryptMessageContent(m.content, sharedKey);
+                return { ...m, content };
+              }
+              return m;
+            }));
+          }
+        }
+
+        setMessages(decryptedData);
         // Mark existing messages as read when we open the chat
         if (chat.id && stompClientRef.current?.connected) {
           stompClientRef.current.publish({
@@ -173,7 +355,7 @@ const ChatApp = () => {
 
     // Subscribe to the active room
     if (stompClientRef.current && stompClientRef.current.connected) {
-      currentSubscriptionRef.current = stompClientRef.current.subscribe(topic, (message) => {
+      currentSubscriptionRef.current = stompClientRef.current.subscribe(topic, async (message) => {
         const parsedMessage = JSON.parse(message.body);
 
         if (parsedMessage.type === 'STATUS_UPDATE') {
@@ -181,27 +363,52 @@ const ChatApp = () => {
             (parsedMessage.messageIds || []).includes(m.id) ? { ...m, status: parsedMessage.newStatus } : m
           ));
         } else {
-          setMessages((prev) => [...prev, parsedMessage]);
-
           // Send read receipt if we receive a message that isn't ours while actively in this chat
           const senderName = parsedMessage.senderUsername || parsedMessage.sender?.username;
-          if (parsedMessage.type === 'CHAT' && senderName !== username) {
-            stompClientRef.current.publish({
-              destination: '/app/chat.readMessages',
-              body: JSON.stringify({ chatRoomId: parsedMessage.chatRoomId || chat.id, senderUsername: username })
-            });
+
+          if (parsedMessage.type === 'CHAT') {
+            const theirUsername = senderName === username ? chat.name : senderName;
+            const targetUser = usersRef.current.find(u => u.username === theirUsername);
+
+            if (targetUser && targetUser.publicKey) {
+              const sharedKey = await getSharedKey(theirUsername, targetUser.publicKey, sharedKeysCache);
+              if (sharedKey) {
+                parsedMessage.content = await decryptMessageContent(parsedMessage.content, sharedKey);
+              }
+            }
+
+            setMessages((prev) => [...prev, parsedMessage]);
+
+            if (senderName !== username) {
+              stompClientRef.current.publish({
+                destination: '/app/chat.readMessages',
+                body: JSON.stringify({ chatRoomId: parsedMessage.chatRoomId || chat.id, senderUsername: username })
+              });
+            }
+          } else {
+            setMessages((prev) => [...prev, parsedMessage]);
           }
         }
       });
     }
   };
 
-  const handleSendMessage = (e) => {
+  const handleSendMessage = async (e) => {
     e.preventDefault();
     if (messageInput.trim() && stompClientRef.current?.connected) {
+
+      let finalContent = messageInput;
+      const targetUser = usersRef.current.find(u => u.username === activeChat.name);
+      if (targetUser && targetUser.publicKey) {
+        const sharedKey = await getSharedKey(activeChat.name, targetUser.publicKey, sharedKeysCache);
+        if (sharedKey) {
+          finalContent = await encryptMessageContent(messageInput, sharedKey);
+        }
+      }
+
       const chatMessage = {
         senderUsername: username,
-        content: messageInput,
+        content: finalContent,
         chatRoomId: activeChat.id, // null for public, number for private
         type: 'CHAT'
       };
@@ -226,6 +433,7 @@ const ChatApp = () => {
     localStorage.removeItem('chatToken');
     localStorage.removeItem('chatUsername');
     currentSubscriptionRef.current = null;
+    sharedKeysCache.current = {};
   };
 
   const getInitials = (name) => {

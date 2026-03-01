@@ -32,6 +32,9 @@ public class User implements UserDetails {
     private String profilePictureUrl;
     private String aboutStatus;
 
+    @Column(columnDefinition = "TEXT")
+    private String publicKey;
+
     @Builder.Default
     private boolean isOnline = false;
 

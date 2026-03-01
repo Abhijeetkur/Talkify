@@ -32,6 +32,7 @@ public class AuthController {
                                 .username(request.getUsername())
                                 .password(passwordEncoder.encode(request.getPassword()))
                                 .fullName(request.getUsername())
+                                .publicKey(request.getPublicKey())
                                 .isOnline(true)
                                 .build();
 
@@ -61,6 +62,9 @@ public class AuthController {
                                 .orElseThrow();
 
                 user.setOnline(true);
+                if (request.getPublicKey() != null && !request.getPublicKey().isEmpty()) {
+                        user.setPublicKey(request.getPublicKey());
+                }
                 userRepository.save(user);
 
                 String jwt = jwtUtils.generateToken(user);
