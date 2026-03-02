@@ -4,20 +4,59 @@ import SockJS from 'sockjs-client';
 import { Send, User as UserIcon, LogOut, Check, CheckCheck, Users } from 'lucide-react';
 import './index.css';
 
+const initDB = () => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("chat-db", 1);
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains("keys")) {
+        db.createObjectStore("keys");
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+};
+
+const storeKey = async (keyName, keyData) => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(["keys"], "readwrite");
+    const store = transaction.objectStore("keys");
+    const request = store.put(keyData, keyName);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+};
+
+const getKey = async (keyName) => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(["keys"], "readonly");
+    const store = transaction.objectStore("keys");
+    const request = store.get(keyName);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+};
+
 const generateAndSaveKeyPair = async () => {
   try {
     const keyPair = await window.crypto.subtle.generateKey(
       { name: "ECDH", namedCurve: "P-384" },
-      true,
+      false, // NOT extractable
       ["deriveKey", "deriveBits"]
     );
     const publicKeyJwk = await window.crypto.subtle.exportKey("jwk", keyPair.publicKey);
-    const privateKeyJwk = await window.crypto.subtle.exportKey("jwk", keyPair.privateKey);
 
+    // Store raw CryptoKey objects in IndexedDB
+    await storeKey("privateKey", keyPair.privateKey);
+    await storeKey("publicKey", keyPair.publicKey);
+
+    // Keep only the public JWK string in localStorage for easy access by other auth handlers
     const pubKeys = JSON.stringify(publicKeyJwk);
-    const privKeys = JSON.stringify(privateKeyJwk);
-    localStorage.setItem('chatPrivateKey', privKeys);
     localStorage.setItem('chatPublicKey', pubKeys);
+    localStorage.removeItem('chatPrivateKey'); // Cleanup legacy
 
     return pubKeys;
   } catch (e) {
@@ -32,19 +71,26 @@ const getSharedKey = async (theirUsername, theirPublicKeyStr, sharedKeysCache) =
   }
 
   try {
-    const myPrivStr = localStorage.getItem('chatPrivateKey');
-    if (!myPrivStr || !theirPublicKeyStr) return null;
+    let myPrivateKey = await getKey("privateKey");
 
-    const myPrivJwk = JSON.parse(myPrivStr);
+    // Migration fallback for existing keys in localStorage
+    if (!myPrivateKey && localStorage.getItem('chatPrivateKey')) {
+      const myPrivStr = localStorage.getItem('chatPrivateKey');
+      const myPrivJwk = JSON.parse(myPrivStr);
+      myPrivateKey = await window.crypto.subtle.importKey(
+        "jwk",
+        myPrivJwk,
+        { name: "ECDH", namedCurve: "P-384" },
+        false, // store as non-extractable
+        ["deriveKey", "deriveBits"]
+      );
+      await storeKey("privateKey", myPrivateKey);
+      localStorage.removeItem('chatPrivateKey');
+    }
+
+    if (!myPrivateKey || !theirPublicKeyStr) return null;
+
     const theirPubJwk = JSON.parse(theirPublicKeyStr);
-
-    const myPrivateKey = await window.crypto.subtle.importKey(
-      "jwk",
-      myPrivJwk,
-      { name: "ECDH", namedCurve: "P-384" },
-      true,
-      ["deriveKey", "deriveBits"]
-    );
 
     const theirPublicKey = await window.crypto.subtle.importKey(
       "jwk",
@@ -177,18 +223,56 @@ const ChatApp = () => {
     'Authorization': `Bearer ${token}`
   };
 
-  const loadUsers = async () => {
+  const fetchUsersAndUpdateRef = async () => {
     try {
       const resUsers = await fetch('/api/users', { headers: authHeaders });
+      if (resUsers.status === 401 || resUsers.status === 403) {
+        handleDisconnect();
+        throw new Error("Unauthorized");
+      }
+      if (!resUsers.ok) return [];
       const newUsers = (await resUsers.json()).filter(u => u.username !== username);
       setUsers(newUsers);
       usersRef.current = newUsers;
+      return newUsers;
+    } catch (err) {
+      console.error("Error fetching users:", err);
+      return [];
+    }
+  };
+
+  const getUserPublicKey = async (targetUsername) => {
+    // 1. Try from memory
+    let user = usersRef.current.find(u => u.username === targetUsername);
+    if (user && user.publicKey) return user.publicKey;
+
+    // 2. Refresh users list if missing
+    const refreshedUsers = await fetchUsersAndUpdateRef();
+    user = refreshedUsers.find(u => u.username === targetUsername);
+    return user ? user.publicKey : null;
+  };
+
+  const loadUsers = async () => {
+    try {
+      const newUsers = await fetchUsersAndUpdateRef();
+      if (!newUsers || newUsers.length === 0 && !isConnected) return; // Disconnected or failed
 
       const resCounts = await fetch(`/api/messages/unread-counts?username=${encodeURIComponent(username)}`, { headers: authHeaders });
-      setUnreadCounts(await resCounts.json());
+      if (resCounts.status === 401 || resCounts.status === 403) return handleDisconnect();
+
+      let parsedCounts = {};
+      if (resCounts.ok) {
+        parsedCounts = await resCounts.json();
+      }
+      setUnreadCounts(parsedCounts);
 
       const resLastMsgs = await fetch(`/api/messages/last-messages?username=${encodeURIComponent(username)}`, { headers: authHeaders });
-      const dataLastMsgs = await resLastMsgs.json();
+      if (resLastMsgs.status === 401 || resLastMsgs.status === 403) return handleDisconnect();
+
+      let dataLastMsgs = {};
+      if (resLastMsgs.ok) {
+        dataLastMsgs = await resLastMsgs.json();
+      }
 
       const decryptedLastMessages = {};
       for (const [otherUser, content] of Object.entries(dataLastMsgs)) {
@@ -199,16 +283,20 @@ const ChatApp = () => {
             if (sharedKey) {
               decryptedLastMessages[otherUser] = await decryptMessageContent(content, sharedKey);
               continue;
+            } else {
+              console.warn(`Could not derive shared key for last message from ${otherUser}`);
             }
+          } else {
+            console.warn(`Could not find public key for ${otherUser}`);
           }
-          decryptedLastMessages[otherUser] = "🔒 Encrypted Message";
+          decryptedLastMessages[otherUser] = "🔒 [Encrypted Message]";
         } else {
           decryptedLastMessages[otherUser] = content;
         }
       }
       setLastMessages(decryptedLastMessages);
     } catch (err) {
-      console.error(err);
+      console.error("Error in loadUsers:", err);
     }
   };
 
@@ -333,12 +421,14 @@ const ChatApp = () => {
           const sharedKey = await getSharedKey(chat.name, pubKeyStr, sharedKeysCache);
           if (sharedKey) {
             decryptedData = await Promise.all(data.map(async m => {
-              if (m.type === 'CHAT' && m.content) {
+              if (m.type === 'CHAT' && m.content && m.content.startsWith("E2E:")) {
                 const content = await decryptMessageContent(m.content, sharedKey);
                 return { ...m, content };
               }
               return m;
             }));
+          } else {
+            console.warn(`Could not derive shared key for history with ${chat.name}`);
           }
         }
 
@@ -368,13 +458,18 @@ const ChatApp = () => {
 
           if (parsedMessage.type === 'CHAT') {
             const theirUsername = senderName === username ? chat.name : senderName;
-            const targetUser = usersRef.current.find(u => u.username === theirUsername);
 
-            if (targetUser && targetUser.publicKey) {
-              const sharedKey = await getSharedKey(theirUsername, targetUser.publicKey, sharedKeysCache);
-              if (sharedKey) {
+            const senderPubKey = await getUserPublicKey(theirUsername);
+
+            if (senderPubKey) {
+              const sharedKey = await getSharedKey(theirUsername, senderPubKey, sharedKeysCache);
+              if (sharedKey && parsedMessage.content.startsWith("E2E:")) {
                 parsedMessage.content = await decryptMessageContent(parsedMessage.content, sharedKey);
+              } else if (!sharedKey) {
+                console.warn(`Failed to derive shared key for incoming WebSocket message from ${theirUsername}`);
               }
+            } else {
+              console.warn(`Could not find target user or public key for incoming WebSocket message from ${theirUsername}`);
             }
 
             setMessages((prev) => [...prev, parsedMessage]);
