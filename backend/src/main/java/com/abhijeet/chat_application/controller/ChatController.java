@@ -17,6 +17,8 @@ import org.springframework.stereotype.Controller;
 
 import java.time.LocalDateTime;
 
+import org.springframework.transaction.annotation.Transactional;
+
 @Controller
 @RequiredArgsConstructor
 @Slf4j
@@ -27,6 +29,7 @@ public class ChatController {
     private final UserService userService;
     private final ChatRoomRepository chatRoomRepository;
 
+    @Transactional
     @MessageMapping("/chat.sendMessage")
     public void sendMessage(@Payload ChatMessageRequest request) {
         User sender;
@@ -93,18 +96,8 @@ public class ChatController {
         headerAccessor.getSessionAttributes().put("username", user.getUsername());
 
         // Mark messages as delivered for this user
-        java.util.List<ChatMessage> deliveredMessages = chatMessageService.markAsDeliveredForUser(user.getUsername());
-
-        // Notify senders about the status update by broadcasting to related chat rooms
-        java.util.Map<Long, java.util.List<Long>> roomIdToMessageIds = new java.util.HashMap<>();
-        if (deliveredMessages != null) {
-            for (ChatMessage msg : deliveredMessages) {
-                if (msg.getChatRoom() != null) {
-                    roomIdToMessageIds.computeIfAbsent(msg.getChatRoom().getId(), k -> new java.util.ArrayList<>())
-                            .add(msg.getId());
-                }
-            }
-        }
+        java.util.Map<Long, java.util.List<Long>> roomIdToMessageIds = chatMessageService
+                .markAsDeliveredForUser(user.getUsername());
 
         for (java.util.Map.Entry<Long, java.util.List<Long>> entry : roomIdToMessageIds.entrySet()) {
             StatusUpdateMessage statusUpdate = StatusUpdateMessage.builder()

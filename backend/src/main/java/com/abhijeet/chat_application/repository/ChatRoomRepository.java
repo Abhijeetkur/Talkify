@@ -10,4 +10,6 @@ import java.util.List;
 @Repository
 public interface ChatRoomRepository extends JpaRepository<ChatRoom, Long> {
     List<ChatRoom> findByParticipantsContaining(User participant);
+
+    List<ChatRoom> findByParticipantsUsername(String username);
 }

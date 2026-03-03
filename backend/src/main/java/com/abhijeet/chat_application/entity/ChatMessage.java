@@ -11,7 +11,10 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @Builder
 @Entity
-@Table(name = "chat_messages")
+@Table(name = "chat_messages", indexes = {
+        @Index(name = "idx_chat_timestamp", columnList = "chat_room_id, timestamp"),
+        @Index(name = "idx_sender_status", columnList = "sender_id, status")
+})
 public class ChatMessage {
 
     @Id

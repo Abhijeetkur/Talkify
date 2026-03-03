@@ -30,6 +30,11 @@ public class ChatRoom {
     @Builder.Default
     private List<User> participants = new ArrayList<>();
 
+    @Column(columnDefinition = "TEXT")
+    private String lastMessage;
+
+    private LocalDateTime lastMessageTimestamp;
+
     @Builder.Default
     private LocalDateTime createdAt = LocalDateTime.now();
 }

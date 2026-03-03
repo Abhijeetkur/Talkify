@@ -3,6 +3,8 @@ package com.abhijeet.chat_application.service;
 import com.abhijeet.chat_application.entity.ChatMessage;
 import com.abhijeet.chat_application.entity.User;
 import com.abhijeet.chat_application.repository.ChatMessageRepository;
+import com.abhijeet.chat_application.entity.ChatRoom;
+import com.abhijeet.chat_application.repository.ChatRoomRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,47 +19,64 @@ import java.util.List;
 public class ChatMessageService {
 
     private final ChatMessageRepository chatMessageRepository;
+    private final ChatRoomRepository chatRoomRepository;
 
+    @Transactional
     public ChatMessage save(ChatMessage chatMessage) {
+        if (chatMessage.getChatRoom() != null && chatMessage.getType() == ChatMessage.MessageType.CHAT) {
+            ChatRoom room = chatMessage.getChatRoom();
+            room.setLastMessage(chatMessage.getContent());
+            room.setLastMessageTimestamp(chatMessage.getTimestamp());
+            chatRoomRepository.save(room);
+        }
         return chatMessageRepository.save(chatMessage);
     }
 
     public List<ChatMessage> getMessages(Long chatRoomId) {
+        List<ChatMessage> messages;
         if (chatRoomId != null) {
-            return chatMessageRepository.findByChatRoomIdOrderByTimestampAsc(chatRoomId);
+            messages = chatMessageRepository.findTop50ByChatRoomIdOrderByTimestampDesc(chatRoomId);
+        } else {
+            messages = chatMessageRepository.findTop50ByChatRoomIsNullOrderByTimestampDesc();
         }
-        return chatMessageRepository.findByChatRoomIsNullOrderByTimestampAsc();
+        Collections.reverse(messages);
+        return messages;
     }
 
     @Transactional
     public List<Long> markAsRead(Long chatRoomId, String readerUsername) {
-        List<ChatMessage> unread = chatMessageRepository.findByChatRoomIdAndSenderUsernameNotAndStatusIn(
+        List<Long> messageIds = chatMessageRepository.findMessageIdsByChatRoomIdAndSenderUsernameNotAndStatusIn(
                 chatRoomId, readerUsername,
                 Arrays.asList(ChatMessage.MessageStatus.SENT, ChatMessage.MessageStatus.DELIVERED));
-        if (unread.isEmpty())
+
+        if (messageIds.isEmpty())
             return Collections.emptyList();
 
-        List<Long> messageIds = new ArrayList<>();
-        for (ChatMessage message : unread) {
-            message.setStatus(ChatMessage.MessageStatus.READ);
-            messageIds.add(message.getId());
-        }
-        chatMessageRepository.saveAll(unread);
+        chatMessageRepository.updateMessageStatusBulk(messageIds, ChatMessage.MessageStatus.READ);
         return messageIds;
     }
 
     @Transactional
-    public List<ChatMessage> markAsDeliveredForUser(String username) {
-        List<ChatMessage> messages = chatMessageRepository.findMessagesByParticipantAndSenderNotAndStatus(
+    public java.util.Map<Long, java.util.List<Long>> markAsDeliveredForUser(String username) {
+        List<Object[]> unreadInfos = chatMessageRepository.findMessageInfoByParticipantAndSenderNotAndStatus(
                 username, ChatMessage.MessageStatus.SENT);
-        if (messages.isEmpty())
-            return Collections.emptyList();
 
-        for (ChatMessage message : messages) {
-            message.setStatus(ChatMessage.MessageStatus.DELIVERED);
+        if (unreadInfos.isEmpty())
+            return Collections.emptyMap();
+
+        List<Long> allMessageIds = new ArrayList<>();
+        java.util.Map<Long, java.util.List<Long>> roomIdToMessageIds = new java.util.HashMap<>();
+
+        for (Object[] info : unreadInfos) {
+            Long messageId = (Long) info[0];
+            Long roomId = (Long) info[1];
+            allMessageIds.add(messageId);
+
+            roomIdToMessageIds.computeIfAbsent(roomId, k -> new ArrayList<>()).add(messageId);
         }
-        chatMessageRepository.saveAll(messages);
-        return messages;
+
+        chatMessageRepository.updateMessageStatusBulk(allMessageIds, ChatMessage.MessageStatus.DELIVERED);
+        return roomIdToMessageIds;
     }
 
     public java.util.Map<String, Long> getUnreadCounts(String username) {
@@ -70,14 +89,14 @@ public class ChatMessageService {
     }
 
     public java.util.Map<String, String> getLastMessages(String username) {
-        List<ChatMessage> latestMessages = chatMessageRepository.findLatestMessagesByParticipant(username);
+        List<ChatRoom> activeRooms = chatRoomRepository.findByParticipantsUsername(username);
         java.util.Map<String, String> lastMessages = new java.util.HashMap<>();
 
-        for (ChatMessage message : latestMessages) {
-            if (message.getChatRoom() != null && message.getContent() != null) {
-                for (User participant : message.getChatRoom().getParticipants()) {
+        for (ChatRoom room : activeRooms) {
+            if (room.getLastMessage() != null) {
+                for (User participant : room.getParticipants()) {
                     if (!participant.getUsername().equals(username)) {
-                        lastMessages.put(participant.getUsername(), message.getContent());
+                        lastMessages.put(participant.getUsername(), room.getLastMessage());
                         break;
                     }
                 }
