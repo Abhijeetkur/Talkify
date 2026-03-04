@@ -3,11 +3,15 @@ package com.abhijeet.chat_application.controller;
 import com.abhijeet.chat_application.dto.AuthRequest;
 import com.abhijeet.chat_application.dto.AuthResponse;
 import com.abhijeet.chat_application.entity.User;
+import com.abhijeet.chat_application.exception.DuplicateResourceException;
+import com.abhijeet.chat_application.exception.ResourceNotFoundException;
+import com.abhijeet.chat_application.exception.UnauthorizedException;
 import com.abhijeet.chat_application.repository.UserRepository;
 import com.abhijeet.chat_application.security.JwtUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -23,9 +27,9 @@ public class AuthController {
         private final AuthenticationManager authenticationManager;
 
         @PostMapping("/register")
-        public ResponseEntity<?> register(@RequestBody AuthRequest request) {
+        public ResponseEntity<AuthResponse> register(@RequestBody AuthRequest request) {
                 if (userRepository.findByUsername(request.getUsername()).isPresent()) {
-                        return ResponseEntity.badRequest().body("Username is already taken");
+                        throw new DuplicateResourceException("User", "username", request.getUsername());
                 }
 
                 User user = User.builder()
@@ -46,20 +50,19 @@ public class AuthController {
         }
 
         @PostMapping("/login")
-        public ResponseEntity<?> login(@RequestBody AuthRequest request) {
+        public ResponseEntity<AuthResponse> login(@RequestBody AuthRequest request) {
                 try {
                         authenticationManager.authenticate(
                                         new UsernamePasswordAuthenticationToken(
                                                         request.getUsername(),
                                                         request.getPassword()));
-                } catch (org.springframework.security.core.AuthenticationException e) {
-                        return org.springframework.http.ResponseEntity
-                                        .status(org.springframework.http.HttpStatus.UNAUTHORIZED)
-                                        .body("Invalid username or password");
+                } catch (BadCredentialsException e) {
+                        throw new UnauthorizedException("Invalid username or password");
                 }
 
                 User user = userRepository.findByUsername(request.getUsername())
-                                .orElseThrow();
+                                .orElseThrow(() -> new ResourceNotFoundException("User", "username",
+                                                request.getUsername()));
 
                 user.setOnline(true);
                 if (request.getPublicKey() != null && !request.getPublicKey().isEmpty()) {

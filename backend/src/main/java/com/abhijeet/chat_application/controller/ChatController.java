@@ -3,6 +3,7 @@ package com.abhijeet.chat_application.controller;
 import com.abhijeet.chat_application.entity.ChatMessage;
 import com.abhijeet.chat_application.entity.ChatRoom;
 import com.abhijeet.chat_application.entity.User;
+import com.abhijeet.chat_application.exception.ResourceNotFoundException;
 import com.abhijeet.chat_application.repository.ChatRoomRepository;
 import com.abhijeet.chat_application.service.ChatMessageService;
 import com.abhijeet.chat_application.service.UserService;
@@ -35,8 +36,8 @@ public class ChatController {
         User sender;
         try {
             sender = userService.getUserByUsername(request.getSenderUsername());
-        } catch (Exception e) {
-            log.error("Error finding sender '{}': {}", request.getSenderUsername(), e.getMessage(), e);
+        } catch (ResourceNotFoundException e) {
+            log.error("Sender not found '{}': {}", request.getSenderUsername(), e.getMessage());
             return;
         }
         ChatRoom chatRoom = null;
@@ -86,8 +87,8 @@ public class ChatController {
         User user;
         try {
             user = userService.getUserByUsername(request.getSenderUsername());
-        } catch (Exception e) {
-            log.error("Error finding user '{}': {}", request.getSenderUsername(), e.getMessage(), e);
+        } catch (ResourceNotFoundException e) {
+            log.error("User not found '{}': {}", request.getSenderUsername(), e.getMessage());
             return null;
         }
         userService.connect(user);

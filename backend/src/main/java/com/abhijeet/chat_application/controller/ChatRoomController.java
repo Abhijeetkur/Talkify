@@ -2,6 +2,7 @@ package com.abhijeet.chat_application.controller;
 
 import com.abhijeet.chat_application.entity.ChatRoom;
 import com.abhijeet.chat_application.entity.User;
+import com.abhijeet.chat_application.exception.BadRequestException;
 import com.abhijeet.chat_application.repository.ChatRoomRepository;
 import com.abhijeet.chat_application.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -22,17 +23,12 @@ public class ChatRoomController {
     @GetMapping("/1on1")
     public ResponseEntity<ChatRoom> getOrCreate1on1Room(@RequestParam String user1, @RequestParam String user2) {
         if (user1.equals(user2)) {
-            return ResponseEntity.badRequest().build();
+            throw new BadRequestException("Cannot create a chat room with yourself");
         }
 
-        User u1;
-        User u2;
-        try {
-            u1 = userService.getUserByUsername(user1);
-            u2 = userService.getUserByUsername(user2);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().build();
-        }
+        // userService.getUserByUsername already throws ResourceNotFoundException
+        User u1 = userService.getUserByUsername(user1);
+        User u2 = userService.getUserByUsername(user2);
 
         // Find existing 1on1 room
         List<ChatRoom> roomsWithU1 = chatRoomRepository.findByParticipantsContaining(u1);
