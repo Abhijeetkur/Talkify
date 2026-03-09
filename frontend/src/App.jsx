@@ -337,7 +337,18 @@ const ChatApp = () => {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(errorText || 'Authentication failed');
+        let errorMessage = errorText || 'Authentication failed';
+        try {
+          const errorData = JSON.parse(errorText);
+          if (errorData.message) {
+            errorMessage = errorData.message;
+          } else if (errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch (e) {
+          // Not JSON, fallback to raw text
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
